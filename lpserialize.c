@@ -239,9 +239,9 @@ static int lp_save(lua_State *L) {
   luaL_addlstring(&buf, (const char *)&header, sizeof(PatternHeader));
 
   /* dump tree */
-  treelen = lua_objlen(L, 1) - sizeof(Pattern) + sizeof(TTree);
+  treelen = (lua_objlen(L, 1) - sizeof(Pattern)) / sizeof(TTree) + 1;
   luaL_addlstring(&buf, (const char *)&treelen, sizeof(uint32_t));
-  luaL_addlstring(&buf, (const char *)p->tree, treelen);
+  luaL_addlstring(&buf, (const char *)p->tree, treelen * sizeof(TTree));
 
   if (header.has_bytecode) {
     uint32_t codesize;
@@ -271,7 +271,7 @@ static int lp_load(lua_State *L) {
   PatternHeader header;
   int has_bytecode;
   size_t len;
-  uint32_t treesize;
+  uint32_t treelen;
 
   buf = luaL_checklstring(L, 1, &len);
   end = buf + len;
@@ -287,15 +287,15 @@ static int lp_load(lua_State *L) {
   buf += sizeof(HOST_HEADER);
 
   checkbuffer(buf, end, sizeof(uint32_t));
-  treesize = *(const uint32_t*)buf;
+  treelen = *(const uint32_t*)buf;
   buf += sizeof(uint32_t);
 
-  checkbuffer(buf, end, treesize);
-  p = (Pattern *)lua_newuserdata(L, treesize + sizeof(Pattern) - sizeof(TTree));
+  checkbuffer(buf, end, treelen * sizeof(TTree));
+  p = (Pattern *)lua_newuserdata(L, (treelen - 1) * sizeof(TTree) + sizeof(Pattern));
   p->code = NULL;
   p->codesize = 0;
-  memcpy(p->tree, buf, treesize);
-  buf += treesize;
+  memcpy(p->tree, buf, treelen * sizeof(TTree));
+  buf += treelen * sizeof(TTree);
 
   if (has_bytecode) {
     void *ud;
