@@ -7,6 +7,13 @@ library for the Lua language.
 Like `string.dump` for Lua functions, the pattern is saved in a binary form
 and can be loaded later, on another machine, ...
 
+## Status
+
+This library is currently under development:
+* It may/does contain bugs
+* The binary format *is not guaranteed to be stable* (don't expect commit n+1
+  will load pattern saved by commit n)
+
 ## Installation
 
 Use the provided Makefile to compile the module (only the `linux` and `macosx`

@@ -186,8 +186,11 @@ static const char* decodevalue(lua_State *L, const char *buf, const char *end) {
 ** when loading patterns.
 */
 
+#define CURRENT_FORMAT_VERSION 1
+
 typedef struct {
     char magic[4];
+    uint16_t format_version;
     uint16_t lua_version;
     uint8_t number_size;
     uint8_t tree_size;
@@ -350,6 +353,7 @@ void lib_init(void) {
   /* initialize header */
   memset(&HOST_HEADER, 0, sizeof(HOST_HEADER));
   memcpy(HOST_HEADER.magic, "LPEG", 4);
+  HOST_HEADER.format_version = CURRENT_FORMAT_VERSION;
   HOST_HEADER.lua_version = LUA_VERSION_NUM;
   HOST_HEADER.number_size = sizeof(lua_Number);
   HOST_HEADER.tree_size = sizeof(TTree);
