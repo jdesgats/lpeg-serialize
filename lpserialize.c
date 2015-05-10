@@ -5,6 +5,7 @@
 #include "lauxlib.h"
 
 #include "lptree.h"
+#include "lpvm.h"
 
 /*
 ** ktable serialization (actually totally independant from LPeg.
@@ -185,20 +186,49 @@ static const char* decodevalue(lua_State *L, const char *buf, const char *end) {
 ** when loading patterns.
 */
 
-struct {
+typedef struct {
     char magic[4];
     uint16_t lua_version;
     uint8_t number_size;
+    uint8_t tree_size;
+    uint8_t instruction_size;
     unsigned is_integer:1;
     unsigned endianness:1;
-    /* 6 unused bits */
+    unsigned has_bytecode:1;
+    /* 5 unused bits */
     char lpeg_version[sizeof(VERSION)];
-} PATTERN_HEADER;
+} PatternHeader;
+PatternHeader HOST_HEADER;
+
+static void compile_pattern(lua_State *L, Pattern *p, int idx) {
+  if (p->code == NULL) {
+    /* not yet compiled: force compilation, do not call compile directly
+     * because final fix need to be applied before. Use regular match method */
+    /* FIXME: this is very fragile as relies on fact that subject type is
+     * checked after having compiled the code */
+    lua_getfield(L, idx, "match");
+    if (lua_isnil(L, -1))
+      luaL_error(L, "can't find :match() method");
+    lua_pushvalue(L, idx);
+    lua_pushnil(L);
+    /* the function is expected to fail, it does not matter as long as pattern
+     * has been expected */
+    if (lua_pcall(L, 2, 0, 0) != LUA_ERRRUN || p->code == NULL)
+      luaL_error(L, "can't compile pattern: unknown error");
+  }
+}
 
 static int lp_save(lua_State *L) {
+  Pattern *p;
   luaL_Buffer buf;
+  PatternHeader header;
   uint32_t treelen;
-  Pattern *p = luaL_checkudata(L, 1, PATTERN_T);
+
+  p = luaL_checkudata(L, 1, PATTERN_T);
+
+  /* prepare header */
+  memcpy(&header, &HOST_HEADER, sizeof(PatternHeader));
+  header.has_bytecode = lua_toboolean(L, 2);
 
   /* we want to play with stack during serialization:
      make another one for string buffer */
@@ -206,12 +236,20 @@ static int lp_save(lua_State *L) {
   luaL_buffinit (bufL, &buf);
 
   /* write header */
-  luaL_addlstring(&buf, (const char *)&PATTERN_HEADER, sizeof(PATTERN_HEADER));
+  luaL_addlstring(&buf, (const char *)&header, sizeof(PatternHeader));
 
   /* dump tree */
   treelen = lua_objlen(L, 1) - sizeof(Pattern) + sizeof(TTree);
   luaL_addlstring(&buf, (const char *)&treelen, sizeof(uint32_t));
   luaL_addlstring(&buf, (const char *)p->tree, treelen);
+
+  if (header.has_bytecode) {
+    uint32_t codesize;
+    compile_pattern(L, p, 1);
+    codesize = p->codesize; /* force a fixed size type */
+    luaL_addlstring(&buf, (const char *)&codesize, sizeof(uint32_t));
+    luaL_addlstring(&buf, (const char *)p->code, p->codesize * sizeof(Instruction));
+  }
 
   /* dump ktable (if any) */
   lua_getfenv(L, 1);
@@ -228,20 +266,25 @@ static int lp_save(lua_State *L) {
 }
 
 static int lp_load(lua_State *L) {
-  size_t len;
   const char *buf, *end;
-  uint32_t treesize;
   Pattern *p;
+  PatternHeader header;
+  int has_bytecode;
+  size_t len;
+  uint32_t treesize;
 
   buf = luaL_checklstring(L, 1, &len);
   end = buf + len;
 
   /* check header */
-  checkbuffer(buf, end, sizeof(PATTERN_HEADER));
-  if (memcmp(buf, &PATTERN_HEADER, sizeof(PATTERN_HEADER)) != 0) {
+  checkbuffer(buf, end, sizeof(PatternHeader));
+  memcpy(&header, buf, sizeof(PatternHeader));
+  has_bytecode = header.has_bytecode;
+  header.has_bytecode = 0; /* to check header validity */
+  if (memcmp(&header, &HOST_HEADER, sizeof(PatternHeader)) != 0) {
     luaL_error(L, "header mismatch");
   }
-  buf += sizeof(PATTERN_HEADER);
+  buf += sizeof(HOST_HEADER);
 
   checkbuffer(buf, end, sizeof(uint32_t));
   treesize = *(const uint32_t*)buf;
@@ -253,6 +296,25 @@ static int lp_load(lua_State *L) {
   p->codesize = 0;
   memcpy(p->tree, buf, treesize);
   buf += treesize;
+
+  if (has_bytecode) {
+    void *ud;
+    lua_Alloc f;
+    uint32_t codesize;
+
+    checkbuffer(buf, end, sizeof(uint32_t));
+    codesize = *(const uint32_t*)buf;
+    buf += sizeof(uint32_t);
+    if (codesize == 0) luaL_error(L, "wrong code");
+
+    f = lua_getallocf(L, &ud);
+    checkbuffer(buf, end, codesize * sizeof(Instruction));
+    p->code = f(ud, NULL, 0, codesize * sizeof(Instruction));
+    p->codesize = codesize;
+    if (p->code == NULL) luaL_error(L, "not enough memory");
+    memcpy(p->code, buf, codesize * sizeof(Instruction));
+    buf += codesize * sizeof(Instruction);
+  }
 
   luaL_getmetatable(L, PATTERN_T);
   if (lua_isnil(L, -1)) {
@@ -286,12 +348,14 @@ void lib_init(void) __attribute__((constructor));
 void lib_init(void) {
   int x=1;
   /* initialize header */
-  memset(&PATTERN_HEADER, 0, sizeof(PATTERN_HEADER));
-  memcpy(PATTERN_HEADER.magic, "LPEG", 4);
-  PATTERN_HEADER.lua_version = LUA_VERSION_NUM;
-  PATTERN_HEADER.number_size = sizeof(lua_Number);
-  PATTERN_HEADER.is_integer = ((lua_Number)0.5) == 0;
-  PATTERN_HEADER.endianness = *(char*)&x;
-  memcpy(PATTERN_HEADER.lpeg_version, VERSION, sizeof(VERSION));
+  memset(&HOST_HEADER, 0, sizeof(HOST_HEADER));
+  memcpy(HOST_HEADER.magic, "LPEG", 4);
+  HOST_HEADER.lua_version = LUA_VERSION_NUM;
+  HOST_HEADER.number_size = sizeof(lua_Number);
+  HOST_HEADER.tree_size = sizeof(TTree);
+  HOST_HEADER.instruction_size = sizeof(Instruction);
+  HOST_HEADER.is_integer = ((lua_Number)0.5) == 0;
+  HOST_HEADER.endianness = *(char*)&x;
+  memcpy(HOST_HEADER.lpeg_version, VERSION, sizeof(VERSION));
 }
 
