@@ -213,8 +213,12 @@ static int lp_save(lua_State *L) {
   luaL_addlstring(&buf, (const char *)&treelen, sizeof(uint32_t));
   luaL_addlstring(&buf, (const char *)p->tree, treelen);
 
-  /* dump ktable */
+  /* dump ktable (if any) */
   lua_getfenv(L, 1);
+  if (!(lua_istable(L, -1) && lua_objlen(L, -1) > 0)) {
+    /* in Lua 5.1, default environment is a table, be sure to encode nil */
+    lua_pushnil(L);
+  }
   encodevalue(L, -1, &buf);
 
   /* finalize */
@@ -258,7 +262,11 @@ static int lp_load(lua_State *L) {
   lua_setmetatable(L, -2);
 
   decodevalue(L, buf, end);
-  lua_setfenv(L, -2);
+  if (lua_istable(L, -1)) {
+    lua_setfenv(L, -2);
+  } else {
+    lua_pop(L, 1);
+  }
   return 1;
 }
 
