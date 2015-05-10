@@ -36,6 +36,11 @@ describe("LPeg serialization", function()
 	  assert.are.same({1,2,3}, persist(L.P'aaa' * L.Cc({1,2,3})):match('aaa'))
 	  assert.are.same('AAA',   persist(L.P'aaa' / function(s) return s:upper() end):match('aaa'))
 	end)
+
+	it('encodes multiple tables' .. msg, function()
+	  -- taken from LPeg test suite (discovered a bug in table serializer)
+	  assert.are.same(-3, persist(L.C(1)/'%0%1'/{aa = 'z'}/{z = -3} * 'x'):match('ax'))
+	end)
   end
 
   it('should not load corrupted code', function()

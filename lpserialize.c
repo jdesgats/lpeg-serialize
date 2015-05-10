@@ -155,6 +155,7 @@ static const char* decodevalue(lua_State *L, const char *buf, const char *end) {
         checkbuffer(buf, end, 1);
         lua_settable(L, -3);
       }
+      buf++; /* skip the final TNIL token */
       break;
     case LUA_TFUNCTION: {
       uint32_t dumplen;
