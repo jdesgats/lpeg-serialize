@@ -30,6 +30,8 @@ describe("LPeg serialization", function()
 	end)
 
 	it('should serialize attached values' .. msg, function()
+	  --XXX: bug in LPeg (crashes Lua, even without serialization)
+	  --assert.are.same(nil,     persist(L.P'aaa' * L.Cc(nil)):match('aaa'))
 	  assert.are.same(true,    persist(L.P'aaa' * L.Cc(true)):match('aaa'))
 	  assert.are.same(42,      persist(L.P'aaa' * L.Cc(42)):match('aaa'))
 	  assert.are.same('foo',   persist(L.P'aaa' * L.Cc('foo')):match('aaa'))
@@ -40,6 +42,10 @@ describe("LPeg serialization", function()
 	it('encodes multiple tables' .. msg, function()
 	  -- taken from LPeg test suite (discovered a bug in table serializer)
 	  assert.are.same(-3, persist(L.C(1)/'%0%1'/{aa = 'z'}/{z = -3} * 'x'):match('ax'))
+	end)
+
+	it('encodes nil captures' .. msg, function()
+	  assert.are.same(nil, persist(L.Cc(nil)):match(''))
 	end)
   end
 

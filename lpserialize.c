@@ -204,6 +204,25 @@ typedef struct {
 } PatternHeader;
 PatternHeader HOST_HEADER;
 
+#if (LUA_VERSION_NUM < 502)
+static void pushktable(lua_State *L, int idx) {
+  lua_getfenv(L, idx);
+  if (lua_objlen(L, -1) <= 0) {
+    /* fenv no set (it is set to some other table) */
+    lua_pop(L, 1);
+    lua_pushnil(L);
+  }
+}
+#else
+static void pushktable(lua_State *L, int idx) {
+  /* returns value (nil or table) is always fine, in particular patterns can
+   * have an empty table as ktable in Lua 5.2+ (which is different from nil)
+   * The 5.1 version would serialize nil in that case. */
+  lua_getuservalue(L, idx);
+}
+#endif
+
+
 static void compile_pattern(lua_State *L, Pattern *p, int idx) {
   if (p->code == NULL) {
     /* not yet compiled: force compilation, do not call compile directly
@@ -256,11 +275,7 @@ static int lp_save(lua_State *L) {
   }
 
   /* dump ktable (if any) */
-  lua_getfenv(L, 1);
-  if (!(lua_istable(L, -1) && lua_objlen(L, -1) > 0)) {
-    /* in Lua 5.1, default environment is a table, be sure to encode nil */
-    lua_pushnil(L);
-  }
+  pushktable(L, 1);
   encodevalue(L, -1, &buf);
 
   /* finalize */
